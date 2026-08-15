@@ -251,7 +251,7 @@
       </div>
       <div class="field-group">
         <label for="departureTime">出発時刻</label>
-        <input type="time" id="departureTime">
+        <input type="time" id="departureTime" step="1800">
       </div>
     </section>
 
@@ -304,9 +304,16 @@ function makeWaypoint(role){
   };
 }
 
+function roundToStep(hhmm, stepMinutes){
+  const totalMin = parseTimeToMinutes(hhmm);
+  const rounded = Math.round(totalMin / stepMinutes) * stepMinutes;
+  return minutesToClock(rounded);
+}
+
 function defaultDepartureTime(){
   const now = new Date();
-  return String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+  const hhmm = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+  return roundToStep(hhmm, 30);
 }
 
 function createDefaultState(){
@@ -405,7 +412,7 @@ function loadState(){
       if (parsed && Array.isArray(parsed.waypoints) && parsed.waypoints.length >= 2){
         state.mode = parsed.mode === 'walk' ? 'walk' : 'car';
         state.avoidTolls = !!parsed.avoidTolls;
-        state.departureTime = parsed.departureTime || defaultDepartureTime();
+        state.departureTime = parsed.departureTime ? roundToStep(parsed.departureTime, 30) : defaultDepartureTime();
         state.waypoints = parsed.waypoints.map((w) => ({
           id: w.id || genId(),
           role: w.role,
@@ -831,7 +838,9 @@ function wireEvents(){
   });
 
   document.getElementById('departureTime').addEventListener('change', (e) => {
-    state.departureTime = e.target.value;
+    const rounded = roundToStep(e.target.value, 30);
+    e.target.value = rounded;
+    state.departureTime = rounded;
     saveState();
     recomputeArrivalsAndRender();
   });
