@@ -284,7 +284,7 @@
 // 3) このアプリはバックエンドを持たないため、APIキーはブラウザから閲覧可能な状態で
 //    埋め込まれます(個人利用・限定共有を前提とした割り切りです。公開リポジトリに
 //    push する場合は取り扱いにご注意ください)
-const ORS_API_KEY = 'YOUR_API_KEY_HERE';
+const ORS_API_KEY = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjAxNTNjZGI4MzkyMDRiM2M4NzNhN2IyOGM1ZTc3Y2ZlIiwiaCI6Im11cm11cjY0In0=';
 
 const STORAGE_KEY = 'route-planner-state-v1';
 const MAX_STOPS = 6;
@@ -469,6 +469,13 @@ function moveWaypoint(id, dir){
 
 // ==== ジオコーディング ====
 
+function friendlyErrorMessage(e){
+  if (e instanceof TypeError){
+    return '通信に失敗しました。ネットワーク接続、またはindex.html内のORS_API_KEYの設定をご確認ください(file://で開いている場合はCORS制限で失敗することがあります)。';
+  }
+  return e.message;
+}
+
 async function throwApiError(res){
   let msg;
   if (res.status === 401 || res.status === 403){
@@ -516,7 +523,7 @@ async function geocodeAddress(wp){
       wp._candidates = features; wp._status = 'pending';
     }
   } catch(e){
-    wp._status = 'error'; wp._error = e.message;
+    wp._status = 'error'; wp._error = friendlyErrorMessage(e);
   }
   saveState();
   renderWaypointList();
@@ -679,7 +686,7 @@ async function runPlan(){
     setTimeout(() => { if (map) map.invalidateSize(); }, 50);
     saveState();
   } catch(e){
-    showError(e.message);
+    showError(friendlyErrorMessage(e));
   } finally {
     btn.disabled = false; btn.textContent = originalLabel;
   }
@@ -747,7 +754,7 @@ async function runOptimize(){
     pendingOptimizeResult = proposed;
     renderOptimizePreview(current, proposed);
   } catch(e){
-    showError(e.message);
+    showError(friendlyErrorMessage(e));
   } finally {
     btn.disabled = false; btn.textContent = originalLabel;
   }
@@ -872,10 +879,8 @@ function wireEvents(){
 
 function registerServiceWorker(){
   if ('serviceWorker' in navigator){
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('./sw.js')
-        .catch((err) => console.warn('SW登録失敗(ローカルファイルでは非対応):', err));
-    });
+    navigator.serviceWorker.register('./sw.js')
+      .catch((err) => console.warn('SW登録失敗(ローカルファイルでは非対応):', err));
   }
 }
 
