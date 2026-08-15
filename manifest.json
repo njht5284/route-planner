@@ -1,0 +1,15 @@
+{
+  "name": "ルートプランナー",
+  "short_name": "ルート",
+  "description": "複数経由地の順序最適化と到着時刻計算ができるルート計画ツール",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f4f7f6",
+  "theme_color": "#1e6f5c",
+  "orientation": "portrait-primary",
+  "lang": "ja",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
