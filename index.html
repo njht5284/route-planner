@@ -151,8 +151,12 @@
   }
   .wp-buttons button:disabled{opacity:0.35;cursor:not-allowed;}
   .wp-remove{color:var(--color-danger);}
+  .wp-lock{min-width:auto;padding:0 10px;font-size:0.82rem;white-space:nowrap;}
+  .wp-lock.active{background:var(--color-accent-light);border-color:var(--color-accent);color:#7c4a03;font-weight:600;}
+  .waypoint-row.locked{background:var(--color-bg);border-color:var(--color-accent);}
+  .waypoint-row .wp-address:disabled{background:var(--color-bg);color:var(--color-text-muted);}
 
-  button.primary, button.secondary{
+  button.primary, button.secondary, button.danger-secondary{
     min-height:44px;
     border-radius:10px;
     font-size:0.95rem;
@@ -163,6 +167,7 @@
   button.primary{border:none;background:var(--color-primary);color:#fff;}
   button.primary:disabled{background:var(--color-border);color:var(--color-text-muted);cursor:not-allowed;}
   button.secondary{border:1px solid var(--color-primary);background:var(--color-surface);color:var(--color-primary-dark);}
+  button.danger-secondary{border:1px solid var(--color-danger);background:var(--color-surface);color:var(--color-danger);width:100%;}
   #addWaypointBtn{
     width:100%;
     min-height:44px;
@@ -277,6 +282,9 @@
         <button type="button" id="optimizeBtn" class="secondary">最適な順序に並べ替える</button>
         <button type="button" id="planBtn" class="primary">ルート計算</button>
       </div>
+      <div class="button-row">
+        <button type="button" id="resetBtn" class="danger-secondary">リセット</button>
+      </div>
       <div id="optimizePreview" class="optimize-preview hidden"></div>
       <div id="errorBanner" class="error-banner hidden"></div>
     </section>
@@ -311,7 +319,7 @@ function genId(){
 function makeWaypoint(role){
   return {
     id: genId(), role, address:'', lat:null, lon:null, label:'',
-    dwellMinutes:0, lastGeocodedAddress:'',
+    dwellMinutes:0, lastGeocodedAddress:'', locked:false,
     _status:'idle', _candidates:null, _error:null
   };
 }
@@ -404,7 +412,8 @@ function serializeState(){
     departureTime: state.departureTime,
     waypoints: state.waypoints.map((wp) => ({
       id: wp.id, role: wp.role, address: wp.address, lat: wp.lat, lon: wp.lon,
-      label: wp.label, dwellMinutes: wp.dwellMinutes, lastGeocodedAddress: wp.lastGeocodedAddress
+      label: wp.label, dwellMinutes: wp.dwellMinutes, lastGeocodedAddress: wp.lastGeocodedAddress,
+      locked: wp.locked
     }))
   };
 }
@@ -438,6 +447,7 @@ function loadState(){
           label: w.label || '',
           dwellMinutes: Number(w.dwellMinutes) || 0,
           lastGeocodedAddress: w.lastGeocodedAddress || '',
+          locked: !!w.locked,
           _status: typeof w.lat === 'number' ? 'ok' : 'idle',
           _candidates: null,
           _error: null
@@ -456,6 +466,20 @@ function invalidateRoute(){
   pendingOptimizeResult = null;
   document.getElementById('resultSection').classList.add('hidden');
   document.getElementById('optimizePreview').classList.add('hidden');
+}
+
+function resetAll(){
+  if (!confirm('入力内容をすべて初期状態に戻します。よろしいですか？')) return;
+  Object.assign(state, createDefaultState());
+  invalidateRoute();
+  hideError();
+  document.getElementById('departureHour').value = state.departureTime.split(':')[0];
+  document.getElementById('departureMinute').value = state.departureTime.split(':')[1];
+  document.getElementById('avoidTolls').checked = state.avoidTolls;
+  document.querySelectorAll('.mode-btn').forEach((b) => b.classList.toggle('active', b.dataset.mode === state.mode));
+  document.getElementById('tollToggleGroup').classList.toggle('hidden', state.mode !== 'car');
+  renderWaypointList();
+  saveState();
 }
 
 function addWaypoint(){
@@ -482,9 +506,19 @@ function moveWaypoint(id, dir){
   const stopIdx = stops.findIndex((w) => w.id === id);
   const targetIdx = stopIdx + dir;
   if (stopIdx === -1 || targetIdx < 0 || targetIdx >= stops.length) return;
+  if (stops[stopIdx].locked || stops[targetIdx].locked) return;
   const globalA = state.waypoints.findIndex((w) => w.id === stops[stopIdx].id);
   const globalB = state.waypoints.findIndex((w) => w.id === stops[targetIdx].id);
   [state.waypoints[globalA], state.waypoints[globalB]] = [state.waypoints[globalB], state.waypoints[globalA]];
+  invalidateRoute();
+  renderWaypointList();
+  saveState();
+}
+
+function toggleLock(id){
+  const wp = findWp(id);
+  if (!wp || wp.role !== 'stop') return;
+  wp.locked = !wp.locked;
   invalidateRoute();
   renderWaypointList();
   saveState();
@@ -631,6 +665,29 @@ async function fetchOptimizedOrder(stops, origin, dest, profile){
   return { orderedStops, distanceM: route.distance, durationS: route.duration };
 }
 
+async function computeOptimizedFullOrder(waypoints, profile){
+  // origin・destination・固定(locked)された経由地は「アンカー」として位置を維持し、
+  // アンカーとアンカーの間にある固定されていない経由地の並びだけを区間ごとに最適化する
+  const result = waypoints.slice();
+  let i = 0;
+  while (i < result.length){
+    const wp = result[i];
+    const isAnchor = wp.role !== 'stop' || wp.locked;
+    if (isAnchor){ i++; continue; }
+    let j = i;
+    while (j < result.length && result[j].role === 'stop' && !result[j].locked){ j++; }
+    const segmentStops = result.slice(i, j);
+    const startAnchor = result[i - 1];
+    const endAnchor = result[j];
+    if (segmentStops.length >= 2){
+      const { orderedStops } = await fetchOptimizedOrder(segmentStops, startAnchor, endAnchor, profile);
+      for (let k = 0; k < orderedStops.length; k++){ result[i + k] = orderedStops[k]; }
+    }
+    i = j;
+  }
+  return result;
+}
+
 function computeArrivalTimes(departureTimeStr, legs, waypoints){
   let cursor = parseTimeToMinutes(departureTimeStr);
   const arrivals = new Array(waypoints.length);
@@ -736,16 +793,18 @@ async function runPlan(){
   }
 }
 
-function renderOptimizePreview(current, proposed){
+function renderOptimizePreview(current, proposed, hasLocked){
   const panel = document.getElementById('optimizePreview');
   const currentStops = stopsOf(state.waypoints);
   const changed = proposed.orderedStops.some((wp, i) => wp.id !== currentStops[i].id);
   panel.classList.remove('hidden');
+  const lockedNote = hasLocked ? '<p class="optimize-note">🔒 固定中の経由地は順序変更の対象外です。</p>' : '';
   panel.innerHTML =
     '<div class="optimize-compare">' +
     '<div><span>現在の順序:</span> ' + formatDistance(current.totalDistanceM) + ' / ' + formatDuration(current.totalDurationS) + '</div>' +
     '<div><span>最適化後:</span> ' + formatDistance(proposed.distanceM) + ' / ' + formatDuration(proposed.durationS) + '</div>' +
     '</div>' +
+    lockedNote +
     '<p class="optimize-note">' + (changed ? '経由地の順序が変わります。' : '現在の順序が既に最適です。') + '</p>' +
     '<div class="button-row">' +
     '<button type="button" id="applyOptimizeBtn" class="primary"' + (changed ? '' : ' disabled') + '>適用</button>' +
@@ -759,7 +818,7 @@ function applyOptimize(){
   if (!pendingOptimizeResult) return;
   const origin = state.waypoints.find((w) => w.role === 'origin');
   const dest = state.waypoints.find((w) => w.role === 'destination');
-  state.waypoints = [origin, ...pendingOptimizeResult.orderedStops, dest];
+  state.waypoints = [origin, ...pendingOptimizeResult.proposedStops, dest];
   pendingOptimizeResult = null;
   document.getElementById('optimizePreview').classList.add('hidden');
   renderWaypointList();
@@ -775,28 +834,34 @@ function cancelOptimize(){
 async function runOptimize(){
   hideError();
   const stops = stopsOf(state.waypoints);
-  if (stops.length < 2){
-    showError('最適化には経由地が2件以上必要です。');
+  const hasLocked = stops.some((s) => s.locked);
+  const unlockedCount = stops.filter((s) => !s.locked).length;
+  if (unlockedCount < 2){
+    showError(hasLocked ? '固定されていない経由地が2件以上のときに利用できます。' : '最適化には経由地が2件以上必要です。');
     return;
   }
   if (state.waypoints.some((wp) => wp.lat == null)){
     showError('すべての地点の住所を確定してください。');
     return;
   }
-  const origin = state.waypoints.find((w) => w.role === 'origin');
-  const dest = state.waypoints.find((w) => w.role === 'destination');
   const btn = document.getElementById('optimizeBtn');
   const originalLabel = btn.textContent;
   btn.disabled = true; btn.textContent = '計算中…';
   try{
     const profile = profileFor(state.mode);
     const avoidTolls = state.mode === 'car' && state.avoidTolls;
-    const [current, proposed] = await Promise.all([
+    const proposedFullWaypoints = await computeOptimizedFullOrder(state.waypoints, profile);
+    const [current, proposedDirections] = await Promise.all([
       fetchDirections(state.waypoints, profile, avoidTolls),
-      fetchOptimizedOrder(stops, origin, dest, profile)
+      fetchDirections(proposedFullWaypoints, profile, avoidTolls)
     ]);
-    pendingOptimizeResult = proposed;
-    renderOptimizePreview(current, proposed);
+    const proposedStops = stopsOf(proposedFullWaypoints);
+    pendingOptimizeResult = { proposedStops };
+    renderOptimizePreview(current, {
+      orderedStops: proposedStops,
+      distanceM: proposedDirections.totalDistanceM,
+      durationS: proposedDirections.totalDurationS
+    }, hasLocked);
   } catch(e){
     showError(friendlyErrorMessage(e));
   } finally {
@@ -838,18 +903,20 @@ function renderWaypointList(){
     const roleLabel = roleLabelOf(wp, state.waypoints);
     const isStop = wp.role === 'stop';
     const stopIdx = isStop ? stops.indexOf(wp) : -1;
-    const canUp = isStop && stopIdx > 0;
-    const canDown = isStop && stopIdx < stops.length - 1;
-    return '<li class="waypoint-row" data-id="' + wp.id + '">' +
+    const canUp = isStop && stopIdx > 0 && !wp.locked && !stops[stopIdx - 1].locked;
+    const canDown = isStop && stopIdx < stops.length - 1 && !wp.locked && !stops[stopIdx + 1].locked;
+    const rowClass = 'waypoint-row' + (wp.locked ? ' locked' : '');
+    return '<li class="' + rowClass + '" data-id="' + wp.id + '">' +
       '<div class="wp-main">' +
       '<span class="wp-role">' + escapeHtml(roleLabel) + '</span>' +
-      '<input type="text" class="wp-address" data-id="' + wp.id + '" value="' + escapeHtml(wp.address) + '" placeholder="住所・施設名を入力">' +
+      '<input type="text" class="wp-address" data-id="' + wp.id + '" value="' + escapeHtml(wp.address) + '" placeholder="住所・施設名を入力"' + (wp.locked ? ' disabled' : '') + '>' +
       renderStatusBadge(wp) +
       '</div>' +
       renderCandidatesHtml(wp) +
       '<div class="wp-sub">' +
       (isStop ? renderDwellSelect(wp) : '<span></span>') +
       '<div class="wp-buttons">' +
+      (isStop ? '<button type="button" class="wp-lock' + (wp.locked ? ' active' : '') + '" data-id="' + wp.id + '" title="順序を固定">' + (wp.locked ? '🔒 固定中' : '🔓 固定') + '</button>' : '') +
       (isStop ? '<button type="button" class="wp-up" data-id="' + wp.id + '"' + (canUp ? '' : ' disabled') + '>↑</button>' : '') +
       (isStop ? '<button type="button" class="wp-down" data-id="' + wp.id + '"' + (canDown ? '' : ' disabled') + '>↓</button>' : '') +
       (isStop ? '<button type="button" class="wp-remove" data-id="' + wp.id + '">✕ 削除</button>' : '') +
@@ -890,9 +957,12 @@ function wireEvents(){
   document.getElementById('addWaypointBtn').addEventListener('click', addWaypoint);
   document.getElementById('optimizeBtn').addEventListener('click', runOptimize);
   document.getElementById('planBtn').addEventListener('click', runPlan);
+  document.getElementById('resetBtn').addEventListener('click', resetAll);
 
   const list = document.getElementById('waypointList');
   list.addEventListener('click', (e) => {
+    const lock = e.target.closest('.wp-lock');
+    if (lock){ toggleLock(lock.dataset.id); return; }
     const up = e.target.closest('.wp-up');
     if (up){ moveWaypoint(up.dataset.id, -1); return; }
     const down = e.target.closest('.wp-down');
