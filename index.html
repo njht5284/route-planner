@@ -78,6 +78,16 @@
   .checkbox-row{display:flex;align-items:center;gap:8px;min-height:44px;}
   .checkbox-row input[type="checkbox"]{width:22px;height:22px;}
   .checkbox-row label{font-size:0.95rem;}
+  #departureDate{
+    width:100%;
+    min-height:44px;
+    padding:8px 10px;
+    margin-bottom:8px;
+    border:1px solid var(--color-border);
+    border-radius:8px;
+    font-size:1rem;
+    background:var(--color-surface);
+  }
   .time-select-row{display:flex;align-items:center;gap:6px;}
   .time-select-row span{font-size:0.9rem;color:var(--color-text-muted);}
   .time-part-select{
@@ -231,6 +241,10 @@
   }
   table#legTable thead th{color:var(--color-text-muted);font-weight:600;}
   table#legTable tr.leg-start td{background:var(--color-primary-light);font-weight:600;color:var(--color-primary-dark);}
+  .stamp-status{margin-top:4px;font-size:0.72rem;font-weight:500;white-space:normal;}
+  .stamp-status-open{color:#1b6b3a;}
+  .stamp-status-closed{color:var(--color-danger);}
+  .stamp-status-unknown{color:var(--color-text-muted);}
   table#legTable tfoot td{font-weight:700;border-top:2px solid var(--color-border);border-bottom:none;}
 
   @media (max-width:420px){
@@ -328,7 +342,8 @@
         </div>
       </div>
       <div class="field-group">
-        <label for="departureHour">出発時刻</label>
+        <label for="departureDate">出発日時</label>
+        <input type="date" id="departureDate">
         <div class="time-select-row">
           <select id="departureHour" class="time-part-select"></select>
           <span>時</span>
@@ -396,7 +411,7 @@ function genId(){
 function makeWaypoint(role){
   return {
     id: genId(), role, address:'', lat:null, lon:null, label:'',
-    dwellMinutes:0, lastGeocodedAddress:'', locked:false,
+    dwellMinutes:0, lastGeocodedAddress:'', locked:false, stampInfo:null,
     _status:'idle', _candidates:null, _error:null
   };
 }
@@ -413,10 +428,16 @@ function defaultDepartureTime(){
   return roundToStep(hhmm, 30);
 }
 
+function defaultDepartureDate(){
+  const now = new Date();
+  return now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
+}
+
 function createDefaultState(){
   return {
     mode:'car',
     avoidTolls:false,
+    departureDate: defaultDepartureDate(),
     departureTime: defaultDepartureTime(),
     waypoints:[ makeWaypoint('origin'), makeWaypoint('destination') ]
   };
@@ -486,11 +507,12 @@ function serializeState(){
   return {
     mode: state.mode,
     avoidTolls: state.avoidTolls,
+    departureDate: state.departureDate,
     departureTime: state.departureTime,
     waypoints: state.waypoints.map((wp) => ({
       id: wp.id, role: wp.role, address: wp.address, lat: wp.lat, lon: wp.lon,
       label: wp.label, dwellMinutes: wp.dwellMinutes, lastGeocodedAddress: wp.lastGeocodedAddress,
-      locked: wp.locked
+      locked: wp.locked, stampInfo: wp.stampInfo || null
     }))
   };
 }
@@ -514,6 +536,7 @@ function loadState(){
       if (parsed && Array.isArray(parsed.waypoints) && parsed.waypoints.length >= 2){
         state.mode = parsed.mode === 'walk' ? 'walk' : 'car';
         state.avoidTolls = !!parsed.avoidTolls;
+        state.departureDate = parsed.departureDate || defaultDepartureDate();
         state.departureTime = parsed.departureTime ? roundToStep(parsed.departureTime, 30) : defaultDepartureTime();
         state.waypoints = parsed.waypoints.map((w) => ({
           id: w.id || genId(),
@@ -525,6 +548,7 @@ function loadState(){
           dwellMinutes: Number(w.dwellMinutes) || 0,
           lastGeocodedAddress: w.lastGeocodedAddress || '',
           locked: !!w.locked,
+          stampInfo: Array.isArray(w.stampInfo) ? w.stampInfo : null,
           _status: typeof w.lat === 'number' ? 'ok' : 'idle',
           _candidates: null,
           _error: null
@@ -552,6 +576,7 @@ function resetAll(){
   hideError();
   document.getElementById('departureHour').value = state.departureTime.split(':')[0];
   document.getElementById('departureMinute').value = state.departureTime.split(':')[1];
+  document.getElementById('departureDate').value = state.departureDate;
   document.getElementById('avoidTolls').checked = state.avoidTolls;
   document.querySelectorAll('.mode-btn').forEach((b) => b.classList.toggle('active', b.dataset.mode === state.mode));
   document.getElementById('tollToggleGroup').classList.toggle('hidden', state.mode !== 'car');
@@ -644,6 +669,7 @@ function applyGeocodeResult(wp, feature, text){
   wp.lat = lat; wp.lon = lon; wp.label = feature.properties.label;
   wp.lastGeocodedAddress = text; wp.address = text;
   wp._status = 'ok'; wp._error = null; wp._candidates = null;
+  wp.stampInfo = null;
 }
 
 async function geocodeAddress(wp){
@@ -779,6 +805,151 @@ function computeArrivalTimes(departureTimeStr, legs, waypoints){
   return arrivals.map(minutesToClock);
 }
 
+function computeArrivalDates(departureDateStr, departureTimeStr, legs, waypoints){
+  const [y, m, d] = departureDateStr.split('-').map(Number);
+  const baseDate = new Date(y, m - 1, d);
+  const toDate = (totalMin) => {
+    const dayOffset = Math.floor(totalMin / 1440);
+    const minOfDay = ((totalMin % 1440) + 1440) % 1440;
+    const dt = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() + dayOffset);
+    dt.setHours(Math.floor(minOfDay / 60), Math.round(minOfDay % 60), 0, 0);
+    return dt;
+  };
+  let cursor = parseTimeToMinutes(departureTimeStr);
+  const arrivals = new Array(waypoints.length);
+  arrivals[0] = toDate(cursor);
+  for (let i = 1; i < waypoints.length; i++){
+    cursor += legs[i - 1].durationS / 60;
+    arrivals[i] = toDate(cursor);
+    if (waypoints[i].role === 'stop' && waypoints[i].dwellMinutes){
+      cursor += waypoints[i].dwellMinutes;
+    }
+  }
+  return arrivals;
+}
+
+// ==== 日本の祝日計算(近似式。参考情報用) ====
+
+function calcVernalEquinoxDay(year){
+  return Math.floor(20.8431 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4));
+}
+function calcAutumnalEquinoxDay(year){
+  return Math.floor(23.2488 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4));
+}
+function calcNthWeekdayDate(year, month, weekday, n){
+  const first = new Date(year, month - 1, 1);
+  const offset = (weekday - first.getDay() + 7) % 7;
+  return 1 + offset + (n - 1) * 7;
+}
+function dateKey(y, m, d){ return y + '-' + String(m).padStart(2,'0') + '-' + String(d).padStart(2,'0'); }
+
+function japaneseHolidaysOfYear(year){
+  const list = [
+    [1,1], [2,11], [4,29], [5,3], [5,4], [5,5], [8,11], [11,3], [11,23],
+    [3, calcVernalEquinoxDay(year)],
+    [9, calcAutumnalEquinoxDay(year)],
+    [1, calcNthWeekdayDate(year,1,1,2)],
+    [7, calcNthWeekdayDate(year,7,1,3)],
+    [9, calcNthWeekdayDate(year,9,1,3)],
+    [10, calcNthWeekdayDate(year,10,1,2)]
+  ];
+  if (year >= 2020) list.push([2,23]);
+  return list.map(([m,d]) => dateKey(year, m, d));
+}
+
+function isJapaneseHoliday(dateObj){
+  const y = dateObj.getFullYear();
+  const holidaySet = new Set();
+  [y - 1, y, y + 1].forEach((yr) => {
+    japaneseHolidaysOfYear(yr).forEach((k) => holidaySet.add(k));
+  });
+  const key = dateKey(dateObj.getFullYear(), dateObj.getMonth() + 1, dateObj.getDate());
+  if (holidaySet.has(key)) return true;
+  // 振替休日: 前日から連続する祝日を遡り、その開始日が日曜なら対象日は振替休日
+  const prev = new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate() - 1);
+  if (!holidaySet.has(dateKey(prev.getFullYear(), prev.getMonth() + 1, prev.getDate()))) return false;
+  let cursor = prev;
+  while (true){
+    const before = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() - 1);
+    if (!holidaySet.has(dateKey(before.getFullYear(), before.getMonth() + 1, before.getDate()))) break;
+    cursor = before;
+  }
+  return cursor.getDay() === 0;
+}
+
+// ==== スタンプ設置場所の休館日・営業時間 簡易判定(参考情報。テキスト解析のため誤判定の可能性あり) ====
+
+const WEEKDAY_KANJI = ['日','月','火','水','木','金','土'];
+
+function toHalfWidth(str){
+  return str.replace(/[０-９：〜～－]/g, (ch) => {
+    const map = { '０':'0','１':'1','２':'2','３':'3','４':'4','５':'5','６':'6','７':'7','８':'8','９':'9','：':':','〜':'~','～':'~','－':'-' };
+    return map[ch] || ch;
+  });
+}
+
+function evaluateStampLocationStatus(infoLines, arrivalDate){
+  if (!infoLines || infoLines.length === 0){
+    return { status:'unknown', reason:'営業時間情報がありません' };
+  }
+  const text = toHalfWidth(infoLines.join(' '));
+  const weekday = arrivalDate.getDay();
+  const isHoliday = isJapaneseHoliday(arrivalDate);
+
+  // 明示的な日付範囲休館 (例: 12/29~1/3, 12月29日~1月3日)
+  const rangeRe = /(\d{1,2})[\/月](\d{1,2})日?\s*[~\-]\s*(\d{1,2})[\/月](\d{1,2})日?/g;
+  let m;
+  while ((m = rangeRe.exec(text)) !== null){
+    const startKey = Number(m[1]) * 100 + Number(m[2]);
+    const endKey = Number(m[3]) * 100 + Number(m[4]);
+    const targetKey = (arrivalDate.getMonth() + 1) * 100 + arrivalDate.getDate();
+    const inRange = startKey <= endKey
+      ? (targetKey >= startKey && targetKey <= endKey)
+      : (targetKey >= startKey || targetKey <= endKey); // 年またぎ(例:12/29~1/3)
+    if (inRange){
+      return { status:'closed', reason:'年末年始等の休館期間に該当する可能性があります' };
+    }
+  }
+
+  // 「休館日」「休業日」「定休日」を含む文の曜日・祝日判定
+  const closureSection = text;
+  const holidayExcluded = /月.{0,4}\(?祝日.{0,4}除/.test(closureSection) || /祝日.{0,4}除/.test(closureSection);
+  const mentionsHoliday = /祝日/.test(closureSection) && !holidayExcluded;
+  const mentionsDayAfterHoliday = /祝日の翌日/.test(closureSection);
+
+  const closedWeekdays = new Set();
+  WEEKDAY_KANJI.forEach((k, idx) => {
+    if (new RegExp(k + '曜').test(closureSection)) closedWeekdays.add(idx);
+  });
+
+  if (mentionsHoliday && isHoliday){
+    return { status:'closed', reason:'祝日のため休館の可能性があります' };
+  }
+  if (closedWeekdays.has(weekday) && !(holidayExcluded && isHoliday)){
+    return { status:'closed', reason: WEEKDAY_KANJI[weekday] + '曜定休の可能性があります' };
+  }
+  if (mentionsDayAfterHoliday){
+    const yesterday = new Date(arrivalDate.getFullYear(), arrivalDate.getMonth(), arrivalDate.getDate() - 1);
+    if (isJapaneseHoliday(yesterday)){
+      return { status:'closed', reason:'祝日の翌日のため休館の可能性があります' };
+    }
+  }
+
+  // 営業時間(hh:mm~hh:mm)との比較
+  const hoursRe = /(\d{1,2}):(\d{2})\s*~\s*(\d{1,2}):(\d{2})/;
+  const hm = hoursRe.exec(text);
+  if (hm){
+    const openMin = Number(hm[1]) * 60 + Number(hm[2]);
+    const closeMin = Number(hm[3]) * 60 + Number(hm[4]);
+    const arrivalMin = arrivalDate.getHours() * 60 + arrivalDate.getMinutes();
+    if (arrivalMin < openMin || arrivalMin > closeMin){
+      return { status:'closed', reason:'営業時間(' + hm[1].padStart(2,'0') + ':' + hm[2] + '~' + hm[3].padStart(2,'0') + ':' + hm[4] + ')外の可能性があります' };
+    }
+    return { status:'open', reason:'営業時間内の可能性があります(' + hm[1].padStart(2,'0') + ':' + hm[2] + '~' + hm[3].padStart(2,'0') + ':' + hm[4] + ')' };
+  }
+  return { status:'unknown', reason:'営業時間を自動判定できませんでした' };
+}
+
 // ==== 地図 ====
 
 function ensureMap(){
@@ -809,19 +980,29 @@ function renderRoute(latlngs, waypoints){
 
 // ==== 結果表示 ====
 
-function renderLegTable(legs, waypoints, arrivals, totalDistanceM, totalDurationS){
+function renderStampStatusChip(wp, arrivalDate){
+  if (!wp.stampInfo || !arrivalDate) return '';
+  const result = evaluateStampLocationStatus(wp.stampInfo, arrivalDate);
+  const cls = result.status === 'open' ? 'stamp-status-open' : result.status === 'closed' ? 'stamp-status-closed' : 'stamp-status-unknown';
+  const icon = result.status === 'open' ? '🟢' : result.status === 'closed' ? '🔴' : '❓';
+  return '<div class="stamp-status ' + cls + '">' + icon + ' ' + escapeHtml(result.reason) + '(参考情報・現地でも要確認)</div>';
+}
+
+function renderLegTable(legs, waypoints, arrivals, arrivalDates, totalDistanceM, totalDurationS){
   const rows = legs.map((leg, i) => {
     const fromLabel = placeNameOf(waypoints[i], waypoints);
     const toLabel = placeNameOf(waypoints[i + 1], waypoints);
+    const chip = renderStampStatusChip(waypoints[i + 1], arrivalDates[i + 1]);
     return '<tr><td>' + escapeHtml(fromLabel) + ' → ' + escapeHtml(toLabel) + '</td>' +
       '<td>' + formatDistance(leg.distanceM) + '</td>' +
       '<td>' + formatDuration(leg.durationS) + '</td>' +
-      '<td>' + arrivals[i + 1] + ' 到着</td></tr>';
+      '<td>' + arrivals[i + 1] + ' 到着' + chip + '</td></tr>';
   }).join('');
+  const startChip = renderStampStatusChip(waypoints[0], arrivalDates[0]);
   document.getElementById('legTable').innerHTML =
     '<thead><tr><th>区間</th><th>距離</th><th>所要時間</th><th>到着時刻</th></tr></thead>' +
     '<tbody>' +
-    '<tr class="leg-start"><td colspan="4">' + arrivals[0] + ' ' + escapeHtml(placeNameOf(waypoints[0], waypoints)) + '出発</td></tr>' +
+    '<tr class="leg-start"><td colspan="4">' + arrivals[0] + ' ' + escapeHtml(placeNameOf(waypoints[0], waypoints)) + '出発' + startChip + '</td></tr>' +
     rows +
     '</tbody>' +
     '<tfoot><tr><td>合計</td><td>' + formatDistance(totalDistanceM) + '</td><td>' + formatDuration(totalDurationS) + '</td><td></td></tr></tfoot>';
@@ -830,7 +1011,8 @@ function renderLegTable(legs, waypoints, arrivals, totalDistanceM, totalDuration
 function recomputeArrivalsAndRender(){
   if (!lastDirectionsResult) return;
   const arrivals = computeArrivalTimes(state.departureTime, lastDirectionsResult.legs, state.waypoints);
-  renderLegTable(lastDirectionsResult.legs, state.waypoints, arrivals, lastDirectionsResult.totalDistanceM, lastDirectionsResult.totalDurationS);
+  const arrivalDates = computeArrivalDates(state.departureDate, state.departureTime, lastDirectionsResult.legs, state.waypoints);
+  renderLegTable(lastDirectionsResult.legs, state.waypoints, arrivals, arrivalDates, lastDirectionsResult.totalDistanceM, lastDirectionsResult.totalDurationS);
 }
 
 function showError(msg){
@@ -859,7 +1041,8 @@ async function runPlan(){
     ensureMap();
     renderRoute(result.geometryLatLng, state.waypoints);
     const arrivals = computeArrivalTimes(state.departureTime, result.legs, state.waypoints);
-    renderLegTable(result.legs, state.waypoints, arrivals, result.totalDistanceM, result.totalDurationS);
+    const arrivalDates = computeArrivalDates(state.departureDate, state.departureTime, result.legs, state.waypoints);
+    renderLegTable(result.legs, state.waypoints, arrivals, arrivalDates, result.totalDistanceM, result.totalDurationS);
     document.getElementById('resultSection').classList.remove('hidden');
     setTimeout(() => { if (map) map.invalidateSize(); }, 50);
     saveState();
@@ -1032,6 +1215,11 @@ function wireEvents(){
   }
   document.getElementById('departureHour').addEventListener('change', onDepartureTimePartChange);
   document.getElementById('departureMinute').addEventListener('change', onDepartureTimePartChange);
+  document.getElementById('departureDate').addEventListener('change', (e) => {
+    state.departureDate = e.target.value || defaultDepartureDate();
+    saveState();
+    recomputeArrivalsAndRender();
+  });
 
   document.getElementById('addWaypointBtn').addEventListener('click', addWaypoint);
   document.getElementById('optimizeBtn').addEventListener('click', runOptimize);
@@ -1176,14 +1364,14 @@ function selectCastleEntry(number){
     renderLocationSubList(castle);
     return;
   }
-  applyCastleSelection(castle, { name: castle.name, lat: castle.lat, lon: castle.lon });
+  applyCastleSelection(castle, { name: castle.name, lat: castle.lat, lon: castle.lon, info: castle.stampInfo });
 }
 
 function selectLocationEntry(locIdx){
   const castle = castlePickerSelectedCastle;
   if (!castle) return;
   const options = [
-    { name: castle.name + '(城跡)', lat: castle.lat, lon: castle.lon },
+    { name: castle.name + '(城跡)', lat: castle.lat, lon: castle.lon, info: castle.stampInfo },
     ...castle.stampLocations
   ];
   const loc = options[locIdx];
@@ -1204,6 +1392,7 @@ function applyCastleSelection(castle, location){
   wp._status = 'ok';
   wp._error = null;
   wp._candidates = null;
+  wp.stampInfo = location.info || null;
   invalidateRoute();
   saveState();
   renderWaypointList();
@@ -1240,6 +1429,7 @@ window.addEventListener('load', () => {
   const [depH, depM] = state.departureTime.split(':');
   document.getElementById('departureHour').value = depH;
   document.getElementById('departureMinute').value = depM;
+  document.getElementById('departureDate').value = state.departureDate;
   document.getElementById('avoidTolls').checked = state.avoidTolls;
   document.querySelectorAll('.mode-btn').forEach((b) => b.classList.toggle('active', b.dataset.mode === state.mode));
   document.getElementById('tollToggleGroup').classList.toggle('hidden', state.mode !== 'car');
