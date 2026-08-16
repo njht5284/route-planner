@@ -78,8 +78,10 @@
   .checkbox-row{display:flex;align-items:center;gap:8px;min-height:44px;}
   .checkbox-row input[type="checkbox"]{width:22px;height:22px;}
   .checkbox-row label{font-size:0.95rem;}
-  #departureTime{
-    width:100%;
+  .time-select-row{display:flex;align-items:center;gap:6px;}
+  .time-select-row span{font-size:0.9rem;color:var(--color-text-muted);}
+  .time-part-select{
+    flex:1;
     min-height:44px;
     padding:8px 10px;
     border:1px solid var(--color-border);
@@ -252,8 +254,13 @@
         </div>
       </div>
       <div class="field-group">
-        <label for="departureTime">出発時刻</label>
-        <select id="departureTime"></select>
+        <label for="departureHour">出発時刻</label>
+        <div class="time-select-row">
+          <select id="departureHour" class="time-part-select"></select>
+          <span>時</span>
+          <select id="departureMinute" class="time-part-select"></select>
+          <span>分</span>
+        </div>
       </div>
     </section>
 
@@ -865,11 +872,15 @@ function wireEvents(){
     saveState();
   });
 
-  document.getElementById('departureTime').addEventListener('change', (e) => {
-    state.departureTime = e.target.value;
+  function onDepartureTimePartChange(){
+    const h = document.getElementById('departureHour').value;
+    const m = document.getElementById('departureMinute').value;
+    state.departureTime = h + ':' + m;
     saveState();
     recomputeArrivalsAndRender();
-  });
+  }
+  document.getElementById('departureHour').addEventListener('change', onDepartureTimePartChange);
+  document.getElementById('departureMinute').addEventListener('change', onDepartureTimePartChange);
 
   document.getElementById('addWaypointBtn').addEventListener('click', addWaypoint);
   document.getElementById('optimizeBtn').addEventListener('click', runOptimize);
@@ -920,19 +931,24 @@ function registerServiceWorker(){
 }
 
 function populateDepartureTimeOptions(){
-  const select = document.getElementById('departureTime');
-  const opts = [];
-  for (let m = 0; m < 1440; m += 30){
-    const clock = minutesToClock(m);
-    opts.push('<option value="' + clock + '">' + clock + '</option>');
+  const hourSelect = document.getElementById('departureHour');
+  const hourOpts = [];
+  for (let h = 0; h < 24; h++){
+    const hh = String(h).padStart(2, '0');
+    hourOpts.push('<option value="' + hh + '">' + hh + '</option>');
   }
-  select.innerHTML = opts.join('');
+  hourSelect.innerHTML = hourOpts.join('');
+
+  const minuteSelect = document.getElementById('departureMinute');
+  minuteSelect.innerHTML = '<option value="00">00</option><option value="30">30</option>';
 }
 
 window.addEventListener('load', () => {
   loadState();
   populateDepartureTimeOptions();
-  document.getElementById('departureTime').value = state.departureTime;
+  const [depH, depM] = state.departureTime.split(':');
+  document.getElementById('departureHour').value = depH;
+  document.getElementById('departureMinute').value = depM;
   document.getElementById('avoidTolls').checked = state.avoidTolls;
   document.querySelectorAll('.mode-btn').forEach((b) => b.classList.toggle('active', b.dataset.mode === state.mode));
   document.getElementById('tollToggleGroup').classList.toggle('hidden', state.mode !== 'car');
