@@ -78,13 +78,14 @@
   .checkbox-row{display:flex;align-items:center;gap:8px;min-height:44px;}
   .checkbox-row input[type="checkbox"]{width:22px;height:22px;}
   .checkbox-row label{font-size:0.95rem;}
-  input[type="time"]{
+  #departureTime{
     width:100%;
     min-height:44px;
     padding:8px 10px;
     border:1px solid var(--color-border);
     border-radius:8px;
     font-size:1rem;
+    background:var(--color-surface);
   }
   .hidden{display:none !important;}
 
@@ -252,7 +253,7 @@
       </div>
       <div class="field-group">
         <label for="departureTime">出発時刻</label>
-        <input type="time" id="departureTime" step="1800">
+        <select id="departureTime"></select>
       </div>
     </section>
 
@@ -865,9 +866,7 @@ function wireEvents(){
   });
 
   document.getElementById('departureTime').addEventListener('change', (e) => {
-    const rounded = roundToStep(e.target.value, 30);
-    e.target.value = rounded;
-    state.departureTime = rounded;
+    state.departureTime = e.target.value;
     saveState();
     recomputeArrivalsAndRender();
   });
@@ -920,8 +919,19 @@ function registerServiceWorker(){
   }
 }
 
+function populateDepartureTimeOptions(){
+  const select = document.getElementById('departureTime');
+  const opts = [];
+  for (let m = 0; m < 1440; m += 30){
+    const clock = minutesToClock(m);
+    opts.push('<option value="' + clock + '">' + clock + '</option>');
+  }
+  select.innerHTML = opts.join('');
+}
+
 window.addEventListener('load', () => {
   loadState();
+  populateDepartureTimeOptions();
   document.getElementById('departureTime').value = state.departureTime;
   document.getElementById('avoidTolls').checked = state.avoidTolls;
   document.querySelectorAll('.mode-btn').forEach((b) => b.classList.toggle('active', b.dataset.mode === state.mode));
