@@ -237,6 +237,72 @@
     .mode-row{flex-direction:column;}
     .button-row > button{min-width:100%;}
   }
+
+  .wp-castle-btn{
+    min-width:auto;
+    padding:0 10px;
+    min-height:44px;
+    border:1px solid var(--color-primary);
+    border-radius:8px;
+    background:var(--color-primary-light);
+    color:var(--color-primary-dark);
+    font-size:0.85rem;
+    font-weight:600;
+    cursor:pointer;
+    white-space:nowrap;
+    flex-shrink:0;
+  }
+  .castle-picker-overlay{
+    position:fixed; inset:0; z-index:1000;
+    background:rgba(26,46,42,0.5);
+    display:flex; align-items:flex-end; justify-content:center;
+  }
+  @media (min-width:720px){
+    .castle-picker-overlay{align-items:center;}
+  }
+  .castle-picker-panel{
+    background:var(--color-surface);
+    width:100%; max-width:600px;
+    max-height:85vh;
+    border-radius:16px 16px 0 0;
+    display:flex; flex-direction:column;
+    overflow:hidden;
+  }
+  @media (min-width:720px){
+    .castle-picker-panel{border-radius:16px; max-height:80vh;}
+  }
+  .castle-picker-header{
+    display:flex; gap:8px; align-items:center;
+    padding:12px; border-bottom:1px solid var(--color-border);
+  }
+  .castle-picker-header input{
+    flex:1; min-height:44px; padding:8px 12px;
+    border:1px solid var(--color-border); border-radius:8px; font-size:1rem;
+  }
+  .castle-picker-header button{
+    min-width:44px; min-height:44px; border:none; background:var(--color-bg);
+    border-radius:8px; font-size:1.1rem; cursor:pointer;
+  }
+  .castle-list{list-style:none; margin:0; padding:8px; overflow-y:auto;}
+  .castle-list-item{
+    display:block; width:100%; text-align:left;
+    padding:12px; margin-bottom:6px;
+    border:1px solid var(--color-border); border-radius:10px;
+    background:var(--color-surface); cursor:pointer;
+  }
+  .castle-list-item .castle-num{
+    display:inline-block; min-width:28px; font-size:0.75rem; font-weight:700;
+    color:var(--color-primary-dark); background:var(--color-primary-light);
+    border-radius:6px; padding:2px 6px; margin-right:8px;
+  }
+  .castle-list-item .castle-sub{display:block; font-size:0.78rem; color:var(--color-text-muted); margin-top:4px;}
+  .castle-list-back{
+    width:100%; text-align:left; padding:10px 12px; margin-bottom:8px;
+    border:none; background:var(--color-bg); border-radius:8px; cursor:pointer; font-weight:600;
+  }
+  .castle-list-empty{padding:20px; text-align:center; color:var(--color-text-muted); font-size:0.9rem;}
+  .castle-picker-credit{padding:8px 12px; font-size:0.75rem; color:var(--color-text-muted); text-align:center; border-top:1px solid var(--color-border);}
+  .castle-picker-credit a{color:var(--color-primary);}
 </style>
 </head>
 <body>
@@ -295,6 +361,17 @@
       <div class="table-wrap"><table id="legTable"></table></div>
     </section>
   </main>
+</div>
+
+<div id="castlePickerOverlay" class="castle-picker-overlay hidden">
+  <div class="castle-picker-panel">
+    <div class="castle-picker-header">
+      <input type="text" id="castleSearchInput" placeholder="城名・番号で検索(例: 江戸城 / 21)">
+      <button type="button" id="closeCastlePickerBtn">✕</button>
+    </div>
+    <ul id="castleList" class="castle-list"></ul>
+    <p class="castle-picker-credit">スタンプ設置場所データ提供: <a href="https://www.tabisiro.jp/" target="_blank" rel="noopener">旅城</a></p>
+  </div>
 </div>
 
 <script>
@@ -910,6 +987,7 @@ function renderWaypointList(){
       '<div class="wp-main">' +
       '<span class="wp-role">' + escapeHtml(roleLabel) + '</span>' +
       '<input type="text" class="wp-address" data-id="' + wp.id + '" value="' + escapeHtml(wp.address) + '" placeholder="住所・施設名を入力"' + (wp.locked ? ' disabled' : '') + '>' +
+      '<button type="button" class="wp-castle-btn" data-id="' + wp.id + '"' + (wp.locked ? ' disabled' : '') + '>🏯 城から選択</button>' +
       renderStatusBadge(wp) +
       '</div>' +
       renderCandidatesHtml(wp) +
@@ -928,6 +1006,7 @@ function renderWaypointList(){
 // ==== イベント配線 ====
 
 function wireEvents(){
+  wireCastlePickerEvents();
   document.querySelectorAll('.mode-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       state.mode = btn.dataset.mode;
@@ -961,6 +1040,8 @@ function wireEvents(){
 
   const list = document.getElementById('waypointList');
   list.addEventListener('click', (e) => {
+    const castleBtn = e.target.closest('.wp-castle-btn');
+    if (castleBtn){ openCastlePicker(castleBtn.dataset.id); return; }
     const lock = e.target.closest('.wp-lock');
     if (lock){ toggleLock(lock.dataset.id); return; }
     const up = e.target.closest('.wp-up');
@@ -1018,8 +1099,143 @@ function populateDepartureTimeOptions(){
   minuteSelect.innerHTML = '<option value="00">00</option><option value="30">30</option>';
 }
 
+// ==== 100名城・続100名城 選択 ====
+
+let castlesData = [];
+let castlePickerTargetId = null;
+let castlePickerView = 'list';
+let castlePickerSelectedCastle = null;
+
+async function loadCastlesData(){
+  try{
+    const res = await fetch('./castles.json');
+    if (res.ok){ castlesData = await res.json(); }
+  } catch(e){
+    console.warn('城データの読み込みに失敗しました', e);
+  }
+}
+
+function openCastlePicker(id){
+  castlePickerTargetId = id;
+  castlePickerView = 'list';
+  castlePickerSelectedCastle = null;
+  document.getElementById('castleSearchInput').value = '';
+  document.getElementById('castlePickerOverlay').classList.remove('hidden');
+  renderCastleList('');
+  document.getElementById('castleSearchInput').focus();
+}
+
+function closeCastlePicker(){
+  document.getElementById('castlePickerOverlay').classList.add('hidden');
+  castlePickerTargetId = null;
+  castlePickerView = 'list';
+  castlePickerSelectedCastle = null;
+}
+
+function renderCastleList(filterText){
+  const list = document.getElementById('castleList');
+  const text = filterText.trim();
+  const filtered = castlesData.filter((c) => {
+    if (!text) return true;
+    return c.name.includes(text) || String(c.number) === text;
+  });
+  if (filtered.length === 0){
+    list.innerHTML = '<li class="castle-list-empty">該当する城が見つかりません</li>';
+    return;
+  }
+  list.innerHTML = filtered.map((c) => {
+    const sub = c.number <= 100 ? '日本100名城' : '続日本100名城';
+    return '<li><button type="button" class="castle-list-item" data-number="' + c.number + '">' +
+      '<span class="castle-num">No.' + c.number + '</span>' + escapeHtml(c.name) +
+      '<span class="castle-sub">' + sub + (c.stampLocations.length > 0 ? '・スタンプ設置場所 ' + c.stampLocations.length + '箇所' : '') + '</span>' +
+      '</button></li>';
+  }).join('');
+}
+
+function renderLocationSubList(castle){
+  const list = document.getElementById('castleList');
+  const options = [
+    { name: castle.name + '(城跡)', lat: castle.lat, lon: castle.lon, info: castle.stampInfo },
+    ...castle.stampLocations
+  ];
+  const items = options.map((loc, idx) =>
+    '<li><button type="button" class="castle-list-item" data-loc-idx="' + idx + '">' +
+    escapeHtml(loc.name) +
+    (loc.info && loc.info.length ? '<span class="castle-sub">' + escapeHtml(loc.info.slice(0, 2).join(' / ')) + '</span>' : '') +
+    '</button></li>'
+  ).join('');
+  list.innerHTML = '<button type="button" class="castle-list-back">← ' + escapeHtml('No.' + castle.number + ' ' + castle.name) + 'の一覧に戻る</button>' + items;
+}
+
+function selectCastleEntry(number){
+  const castle = castlesData.find((c) => c.number === number);
+  if (!castle) return;
+  if (castle.stampLocations.length > 0){
+    castlePickerView = 'locations';
+    castlePickerSelectedCastle = castle;
+    renderLocationSubList(castle);
+    return;
+  }
+  applyCastleSelection(castle, { name: castle.name, lat: castle.lat, lon: castle.lon });
+}
+
+function selectLocationEntry(locIdx){
+  const castle = castlePickerSelectedCastle;
+  if (!castle) return;
+  const options = [
+    { name: castle.name + '(城跡)', lat: castle.lat, lon: castle.lon },
+    ...castle.stampLocations
+  ];
+  const loc = options[locIdx];
+  if (!loc) return;
+  applyCastleSelection(castle, loc);
+}
+
+function applyCastleSelection(castle, location){
+  const wp = findWp(castlePickerTargetId);
+  if (!wp) { closeCastlePicker(); return; }
+  const label = 'No.' + castle.number + ' ' + castle.name +
+    (location.name && location.name !== castle.name ? '（' + location.name + '）' : '');
+  wp.address = label;
+  wp.lastGeocodedAddress = label;
+  wp.lat = location.lat;
+  wp.lon = location.lon;
+  wp.label = label;
+  wp._status = 'ok';
+  wp._error = null;
+  wp._candidates = null;
+  invalidateRoute();
+  saveState();
+  renderWaypointList();
+  closeCastlePicker();
+}
+
+function wireCastlePickerEvents(){
+  document.getElementById('closeCastlePickerBtn').addEventListener('click', closeCastlePicker);
+  document.getElementById('castlePickerOverlay').addEventListener('click', (e) => {
+    if (e.target.id === 'castlePickerOverlay') closeCastlePicker();
+  });
+  document.getElementById('castleSearchInput').addEventListener('input', (e) => {
+    if (castlePickerView === 'list') renderCastleList(e.target.value);
+  });
+  document.getElementById('castleList').addEventListener('click', (e) => {
+    const back = e.target.closest('.castle-list-back');
+    if (back){
+      castlePickerView = 'list';
+      castlePickerSelectedCastle = null;
+      renderCastleList(document.getElementById('castleSearchInput').value);
+      return;
+    }
+    const locItem = e.target.closest('[data-loc-idx]');
+    if (locItem){ selectLocationEntry(Number(locItem.dataset.locIdx)); return; }
+    const item = e.target.closest('.castle-list-item[data-number]');
+    if (item){ selectCastleEntry(Number(item.dataset.number)); return; }
+  });
+}
+
 window.addEventListener('load', () => {
   loadState();
+  loadCastlesData();
   populateDepartureTimeOptions();
   const [depH, depM] = state.departureTime.split(':');
   document.getElementById('departureHour').value = depH;

@@ -1,10 +1,11 @@
-const CACHE_NAME = 'route-planner-v1';
+const CACHE_NAME = 'route-planner-v2';
 const STATIC_FILES = [
   './',
   './index.html',
   './manifest.json',
   './icon.svg',
-  './icon-maskable.svg'
+  './icon-maskable.svg',
+  './castles.json'
 ];
 
 self.addEventListener('install', (event) => {
