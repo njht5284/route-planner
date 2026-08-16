@@ -478,7 +478,10 @@ function moveWaypoint(id, dir){
 // ==== ジオコーディング ====
 
 function friendlyErrorMessage(e){
-  if (e instanceof TypeError){
+  // fetch()自体が失敗した場合(ネットワーク断・CORS拒否)はTypeErrorかつ
+  // このメッセージになる。それ以外のTypeError(コード側のバグ等)は誤診断を避けるため
+  // そのままe.messageを表示する。
+  if (e instanceof TypeError && e.message === 'Failed to fetch'){
     return '通信に失敗しました。ネットワーク接続、またはindex.html内のORS_API_KEYの設定をご確認ください(file://で開いている場合はCORS制限で失敗することがあります)。';
   }
   return e.message;
@@ -568,7 +571,9 @@ function profileFor(mode){
 
 async function fetchDirections(waypoints, profile, avoidTolls){
   const coordinates = waypoints.map((wp) => [wp.lon, wp.lat]);
-  const body = { coordinates, instructions:false, language:'ja' };
+  // instructions:false だと properties.segments 自体が返らなくなるため、
+  // ターンバイターン案内は使わないが true にして区間ごとの距離・時間だけ利用する
+  const body = { coordinates, instructions:true, language:'ja' };
   if (avoidTolls){
     body.options = { avoid_features:['tollways'] };
   }
