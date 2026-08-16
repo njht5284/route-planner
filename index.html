@@ -670,7 +670,7 @@ function renderRoute(latlngs, waypoints){
     }).addTo(routeLayerGroup);
     marker.bindTooltip((idx + 1) + '. ' + (wp.label || wp.address));
   });
-  map.fitBounds(line.getBounds(), { padding:[32,32], maxZoom:15 });
+  map.fitBounds(line.getBounds(), { padding:[16,16] });
 }
 
 // ==== 結果表示 ====
