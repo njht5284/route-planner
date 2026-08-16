@@ -656,12 +656,14 @@ function ensureMap(){
 
 function renderRoute(latlngs, waypoints){
   routeLayerGroup.clearLayers();
-  const line = L.polyline(latlngs, { color:'#1e6f5c', weight:5, opacity:0.85 }).addTo(routeLayerGroup);
+  // 地図の緑・赤系の配色に同化しないよう、白い縁取り+マゼンタの太線で描画する
+  L.polyline(latlngs, { color:'#ffffff', weight:9, opacity:0.9 }).addTo(routeLayerGroup);
+  const line = L.polyline(latlngs, { color:'#e6007e', weight:5, opacity:0.95 }).addTo(routeLayerGroup);
   waypoints.forEach((wp, idx) => {
-    const fillColor = wp.role === 'origin' ? '#1e6f5c' : wp.role === 'destination' ? '#d97706' : '#3b8f78';
+    const fillColor = wp.role === 'origin' ? '#1565c0' : wp.role === 'destination' ? '#d32f2f' : '#f57c00';
     const marker = L.circleMarker([wp.lat, wp.lon], {
-      radius: wp.role === 'stop' ? 7 : 9,
-      color:'#ffffff', weight:2, fillColor, fillOpacity:1
+      radius: wp.role === 'stop' ? 8 : 10,
+      color:'#ffffff', weight:3, fillColor, fillOpacity:1
     }).addTo(routeLayerGroup);
     marker.bindTooltip((idx + 1) + '. ' + (wp.label || wp.address));
   });
