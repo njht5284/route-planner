@@ -351,6 +351,10 @@ function roleLabelOf(wp, waypoints){
   return '経由地' + (stopsOf(waypoints).indexOf(wp) + 1);
 }
 
+function placeNameOf(wp, waypoints){
+  return wp.address && wp.address.trim() ? wp.address.trim() : roleLabelOf(wp, waypoints);
+}
+
 function formatMinutesLabel(m){
   if (m === 0) return 'なし';
   if (m < 60) return m + '分';
@@ -660,8 +664,8 @@ function renderRoute(latlngs, waypoints){
 
 function renderLegTable(legs, waypoints, arrivals, totalDistanceM, totalDurationS){
   const rows = legs.map((leg, i) => {
-    const fromLabel = roleLabelOf(waypoints[i], waypoints);
-    const toLabel = roleLabelOf(waypoints[i + 1], waypoints);
+    const fromLabel = placeNameOf(waypoints[i], waypoints);
+    const toLabel = placeNameOf(waypoints[i + 1], waypoints);
     return '<tr><td>' + escapeHtml(fromLabel) + ' → ' + escapeHtml(toLabel) + '</td>' +
       '<td>' + formatDistance(leg.distanceM) + '</td>' +
       '<td>' + formatDuration(leg.durationS) + '</td>' +
@@ -670,7 +674,7 @@ function renderLegTable(legs, waypoints, arrivals, totalDistanceM, totalDuration
   document.getElementById('legTable').innerHTML =
     '<thead><tr><th>区間</th><th>距離</th><th>所要時間</th><th>到着時刻</th></tr></thead>' +
     '<tbody>' +
-    '<tr class="leg-start"><td colspan="4">' + arrivals[0] + ' ' + escapeHtml(roleLabelOf(waypoints[0], waypoints)) + '出発</td></tr>' +
+    '<tr class="leg-start"><td colspan="4">' + arrivals[0] + ' ' + escapeHtml(placeNameOf(waypoints[0], waypoints)) + '出発</td></tr>' +
     rows +
     '</tbody>' +
     '<tfoot><tr><td>合計</td><td>' + formatDistance(totalDistanceM) + '</td><td>' + formatDuration(totalDurationS) + '</td><td></td></tr></tfoot>';
